@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "preview": "npx zenn preview"
+  },
+  "devDependencies": {
+    "zenn-cli": "^0.5.2"
+  }
+}
