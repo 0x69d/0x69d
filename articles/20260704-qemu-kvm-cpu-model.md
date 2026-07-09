@@ -2,9 +2,11 @@
 title: "QEMU/KVMのCPUモデルについて"
 emoji: "⚙️"
 type: "tech"
-topics: ["qemu", "kvm", "libvirt", "linux", "仮想化"]
+topics: ["linux", "libvirt", "kvm", "qemu", "仮想化"]
 published: true
 ---
+
+## はじめに
 
 QEMU/KVM + libvirtによる仮想環境構築ツールを勉強がてら開発しています。
 
