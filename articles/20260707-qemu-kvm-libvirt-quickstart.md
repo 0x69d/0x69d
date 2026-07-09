@@ -1,9 +1,9 @@
 ---
 title: "QEMU/KVM + libvirt 仮想化クイックガイド"
-emoji: "🧰"
+emoji: "🚀"
 type: "tech"
 topics: ["linux", "libvirt", "kvm", "qemu", "仮想化"]
-published: false
+published: true
 ---
 
 ## はじめに
@@ -527,7 +527,7 @@ VMとボリュームを削除したい方は以下のコマンドをご利用く
 VMとボリュームを削除する:
 ```bash
 virsh destroy quickstart-vm
-virsh undefine quickstart-vm
+virsh undefine quickstart-vm --nvram
 virsh vol-delete --pool default ubuntu-2604.qcow2
 virsh vol-delete --pool default seed.img
 rm ubuntu-26.04-server-cloudimg-amd64.img seed.img user-data meta-data
