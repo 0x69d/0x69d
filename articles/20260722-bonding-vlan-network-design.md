@@ -14,7 +14,7 @@ published: true
 - **Bonding**: 複数の物理NICをまとめて一つの論理的なNICとして扱う
 - **VLAN**: 一つのNICを複数の論理的なネットワークに分ける
 
-いずれもOSI参照モデルのL2（データリンク層）で動作する技術です。IPアドレス（L3）より下のレイヤーで、Ethernetフレームの送受信を制御します。
+いずれもOSI参照モデルのL2（データリンク層）で動作する技術です。IPアドレスより下のレイヤーで、Ethernetフレームの送受信を制御します。
 
 ```mermaid
 graph LR
@@ -34,7 +34,6 @@ graph LR
 
 ## Bondingの仕組み
 
-まず、Bondingの仕組みから整理します。
 Bondingは、複数の物理NICを束ねて一つの論理的なNICとして扱う仕組みです。
 主な目的は次の2つです。
 
@@ -46,7 +45,7 @@ Bondingは、複数の物理NICを束ねて一つの論理的なNICとして扱�
 | モード | 概要 |
 |---|---|
 | active-backup | 1本をアクティブ、残りをバックアップとして待機させる |
-| 802.3ad (LACP) | 複数NICを束ねて負荷分散する |
+| 802.3ad (LACP) | 複数NICを束ねて負荷分散する（対向スイッチ側もLACP設定が必要） |
 | balance-rr | ラウンドロビンでパケットを振り分ける |
 
 nmcliで実践する場合、次のようなコマンドになります。
@@ -56,9 +55,9 @@ nmcliで実践する場合、次のようなコマンドになります。
 nmcli connection add type bond ifname bond0 con-name bond0 \
   mode 802.3ad
 
-# 物理NICをbond0のスレーブとして追加
-nmcli connection add type ethernet ifname enp1s0 master bond0
-nmcli connection add type ethernet ifname enp2s0 master bond0
+# 物理NICをbond0のポートとして追加
+nmcli connection add type ethernet ifname enp1s0 controller bond0 port-type bond
+nmcli connection add type ethernet ifname enp2s0 controller bond0 port-type bond
 
 # bond0を起動
 nmcli connection up bond0
@@ -68,8 +67,7 @@ nmcli connection up bond0
 
 ## VLANの仕組み
 
-続いて、VLANです。
-VLANは、1つの物理/論理NICの上に複数の独立したL2セグメント（ブロードキャストドメイン）を作る仕組みです。
+VLANは、1つの物理/論理NICの上に複数の独立したL2セグメントを作る仕組みです。
 主な目的は次の2つです。
 
 - **セグメントの分離**: 互いに通信できない複数のネットワークを作る
@@ -93,7 +91,7 @@ title 802.1Q VLANタグ (4 bytes / 32 bit)
 20-31: "VID"
 ```
 
-VID(12bit)がVLAN IDです。VIDは12bitのため1〜4094が有効範囲になります。
+VID(12bit)がVLAN IDで、1〜4094が有効範囲になります。
 
 nmcliで実践する場合、次のようなコマンドになります。
 
@@ -103,12 +101,11 @@ nmcli connection add type vlan con-name vlan10 ifname enp1s0.10 \
   dev enp1s0 id 10
 ```
 
-これで`enp1s0`という物理NICの上に、VLAN ID 10専用の`enp1s0.10`という論理インターフェースを作成できます。
+これで`enp1s0`という物理NICの上に、VLAN ID 10専用の`enp1s0.10`という論理NICを作成できます。
 
 ## Bonding × VLAN
 
-BondingとVLANの組み合わせ方はシンプルです。
-VLANサブインターフェースを作るとき、親（`dev`）に物理NICではなくbondタイプのインターフェースを指定するだけです。
+BondingとVLANの組み合わせ方は、VLANサブインターフェースを作るとき、親（`dev`）に物理NICではなくbondタイプのインターフェースを指定するだけです。
 
 ```bash
 # bond0の上にVLAN ID 10のサブインターフェースを作る
@@ -120,17 +117,32 @@ nmcli connection add type vlan con-name vlan20 ifname bond0.20 \
   dev bond0 id 20
 ```
 
-これだけで、「物理NIC2本 → bond0（冗長化） → bond0.10 / bond0.20（論理分離）」という積み重ね構造ができあがります。
+これにより、「物理NIC2本 → bond0（冗長化） → bond0.10 / bond0.20（論理分離）」という積み重ね構造ができあがります。
+外部から届いたフレームがどこで受信され、どこで集約・分離され、最終的にどこへ渡るのかを含めて図示すると次のようになります。
 
 ```mermaid
 graph TD
-    NIC1["物理NIC #1<br/>enp1s0"] --> BOND["bond0<br/>(冗長化・負荷分散)"]
-    NIC2["物理NIC #2<br/>enp2s0"] --> BOND
-    BOND --> VLAN10["bond0.10<br/>(VLAN ID 10)"]
-    BOND --> VLAN20["bond0.20<br/>(VLAN ID 20)"]
+    subgraph external["外部ネットワーク"]
+        INTERNET["インターネット"] --> SWITCH["L2スイッチ"]
+    end
+
+    subgraph physical["物理層"]
+        SWITCH --> NIC1["物理NIC #1<br/>enp1s0"]
+        SWITCH --> NIC2["物理NIC #2<br/>enp2s0"]
+    end
+
+    subgraph host["ホスト内部（カーネル）"]
+        NIC1 --> BOND["bond0<br/>(冗長化・負荷分散)"]
+        NIC2 --> BOND
+        BOND --> VLAN10["bond0.10<br/>(VLAN ID 10)"]
+        BOND --> VLAN20["bond0.20<br/>(VLAN ID 20)"]
+        VLAN10 --> APP1["アプリケーション<br/>(VLAN ID 10 セグメント)"]
+        VLAN20 --> APP2["アプリケーション<br/>(VLAN ID 20 セグメント)"]
+    end
 ```
 
 冗長化はbond0が、論理分離はその上のVLANサブインターフェースが担い、役割がきれいに分かれています。
+分離されたフレームは、それぞれのVLANサブインターフェースを通ってホスト内部のアプリケーションまで届きます。
 
 ## まとめ
 
@@ -145,4 +157,4 @@ graph TD
 ## 参考
 
 - [VLANサブインターフェースでVLAN分離を検証する](https://zenn.dev/0x69d/articles/20260722-vlan-subinterface-verification)
-- [Linux BridgeのVLAN Filteringでアクセスポート/トランクポートを実現する](https://zenn.dev/0x69d/articles/20260722-linux-bridge-vlan-filtering)
+- [LinuxブリッジのVLAN Filteringでアクセスポートを作る](https://zenn.dev/0x69d/articles/20260722-linux-bridge-vlan-filtering)

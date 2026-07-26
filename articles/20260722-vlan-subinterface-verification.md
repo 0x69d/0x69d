@@ -10,11 +10,11 @@ published: true
 
 前回記事「[BondingとVLANでネットワークを設計する](https://zenn.dev/0x69d/articles/20260722-bonding-vlan-network-design)」で、BondingとVLANの仕組みと用語を整理しました。今回はそのうちVLANについて、実際にVMを使って分離を検証します。
 
-VLANタグの付与・剥奪の責任は、ブリッジではなく各VMのゲストOS側（VLANサブインターフェース）に持たせます。次回の記事では、この責任をブリッジ側（VLAN Filtering）に持たせる方式を検証します。
+今回の記事では、VLANタグ処理の責任をブリッジではなく各VMのゲストOS（VLANサブインターフェース）に持たせます。
 
 ## 実演環境の構築
 
-ここから先は、実際にVMを使って検証します。検証はWSL2上のUbuntuで行いました。
+ここから先は、実際にVMを使って検証します。
 
 ### 検証環境
 
@@ -26,18 +26,18 @@ VLANタグの付与・剥奪の責任は、ブリッジではなく各VMのゲ�
 
 ```mermaid
 graph TD
-    BR["br-vlandemo<br/>(タグの中身を見ない)"]
-    BR -.tap.- V1["vlan-vm1<br/>VLAN 10 / 192.168.50.1"]
-    BR -.tap.- V2["vlan-vm2<br/>VLAN 10 / 192.168.50.2"]
-    BR -.tap.- V3["vlan-vm3<br/>VLAN 20 / 192.168.50.3"]
+    BR["br-vlandemo<br/>(ブリッジ)"]
+    BR -.tap.- V1["vlan-vm1<br/>VLAN ID 10 / 192.168.50.1"]
+    BR -.tap.- V2["vlan-vm2<br/>VLAN ID 10 / 192.168.50.2"]
+    BR -.tap.- V3["vlan-vm3<br/>VLAN ID 20 / 192.168.50.3"]
 ```
 
-> 図中の`tap`は「タップインターフェース」を指します。VMを起動するとlibvirtが`vnetX`という名前で自動生成する仮想インターフェースで、ホスト側から見るとVMの仮想NICはこのタップインターフェースとしてブリッジに接続されます。各VMの内部では、この検証用NICの上にVLANサブインターフェース（後述）を作ります。
+> 図中の`tap`（tapインターフェース）は、VMを起動するとlibvirtが`vnetX`という名前で自動生成する仮想インターフェースです。ホスト側から見ると、VMの仮想NICはこのtapインターフェースとしてブリッジに接続されます。各VMの内部では、この検証用NICの上にVLANサブインターフェース（後述）を作ります。
 
 設計方針は次の2点です。
 
 - **ブリッジ（`br-vlandemo`）はVLANタグを一切意識しない**
-- **VLANタグ処理の責務は各VMのゲストOS側に持たせる**
+- **VLANタグ処理の責務は各VMのゲストOSに持たせる**
 
 「ブリッジ＝VLANタグに関与しない」「VMのVLANサブIF＝VLANタグの処理担当」という役割分担になります。
 
@@ -60,7 +60,7 @@ $ ip -d link show br-vlandemo
     bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 0 vlan_protocol 802.1Q ...
 ```
 
-`state DOWN`になっていますが、ポート（VMのタップインターフェースなど）がまだ1つも接続されていないためで、正常な状態です。ポートが1つでも上がれば`state UP`に変わります。
+`state DOWN`になっていますが、ポート（VMのtapインターフェースなど）がまだ1つも接続されていないためで、正常な状態です。ポートが1つでも接続されれば`state UP`に変わります。
 
 ### VMを3台作る
 
@@ -101,7 +101,7 @@ $ virsh domiflist vlan-vm1
  vnet1       bridge    br-vlandemo   virtio   52:54:00:e2:e3:f5
 ```
 
-`vlan-vm1`では、`vnet0`が管理用（`default`）、`vnet1`が検証用（`br-vlandemo`）のNICです。`Type`列が`bridge`になっている点が、libvirtのネットワークを経由せず直接ブリッジに接続していることを表しています。
+`vlan-vm1`では、`vnet0`が管理用、`vnet1`が検証用のNICです。`Type`列が`bridge`になっている点が、libvirtのネットワークを経由せず直接ブリッジに接続していることを表しています。
 
 これはあくまでホスト側から見た名前です。ゲストOS側ではどう見えるか、SSHでvlan-vm1に入って確認します。
 
@@ -112,7 +112,7 @@ enp1s0           UP             52:54:00:5c:67:ff <BROADCAST,MULTICAST,UP,LOWER_
 enp2s0           UP             52:54:00:e2:e3:f5 <BROADCAST,MULTICAST,UP,LOWER_UP>
 ```
 
-MACアドレスを`virsh domiflist`の出力と照らし合わせると、`enp1s0`が管理用NIC、`enp2s0`が検証用NICだとわかります。
+MACアドレスを`virsh domiflist`の出力と照らし合わせると、`enp1s0`が管理用、`enp2s0`が検証用のNICだとわかります。
 
 以降は、この`enp2s0`に対してVLANサブインターフェースを作っていきます。
 
@@ -126,7 +126,7 @@ MACアドレスを`virsh domiflist`の出力と照らし合わせると、`enp1s
 | vlan-vm2 | 10 | enp2s0.10 | 192.168.50.2/24 |
 | vlan-vm3 | 20 | enp2s0.20 | 192.168.50.3/24 |
 
-vlan-vm1での設定例です（vlan-vm2は同じVLAN ID 10、vlan-vm3だけVLAN ID 20とIPアドレスを変えて同様に実行しました）。
+vlan-vm1での設定例です。vlan-vm2は同じVLAN ID 10、vlan-vm3はVLAN ID 20にして、あとはIPアドレスを変えてそれぞれのVMでも同様にコマンドを実行しました。
 
 ```bash
 # 事前に対象NICのコネクション名を確認する
@@ -173,7 +173,7 @@ $ ip route show dev enp2s0.10
 
 ### 同一VLAN間の疎通確認
 
-vlan-vm1（VID10, .1）からvlan-vm2（VID10, .2）へpingを打ちます。
+vlan-vm1（VLAN ID 10, .1）からvlan-vm2（VLAN ID 10, .2）へpingを打ちます。
 
 ```bash
 $ ping -I enp2s0.10 -c 4 192.168.50.2
@@ -191,7 +191,7 @@ PING 192.168.50.2 (192.168.50.2) from 192.168.50.1 enp2s0.10: 56(84) bytes of da
 
 ### 異なるVLAN間の疎通確認
 
-同じ手順で、vlan-vm1（VID10, .1）からvlan-vm3（VID20, .3）へpingを打ちます。
+同じ手順で、vlan-vm1（VLAN ID 10, .1）からvlan-vm3（VLAN ID 20, .3）へpingを打ちます。
 
 ```bash
 $ ping -I enp2s0.10 -c 4 -W 2 192.168.50.3
@@ -207,13 +207,13 @@ ping: sendmsg: No route to host
 
 同じサブネット・同じブリッジにいるにもかかわらず、VLAN IDが違うだけで疎通できませんでした。
 
-`Destination Host Unreachable`はARP解決に失敗した際の応答です。この時点でvlan-vm1は、vlan-vm3のMACアドレスを解決できないことがわかります。
+`Destination Host Unreachable`はARP解決に失敗した送信元カーネルが生成するエラーです。この時点でvlan-vm1は、vlan-vm3のMACアドレスを解決できないことがわかります。
 
 ## tcpdumpでフレームを覗く
 
 ここまでで「VLANで分離できている」ことは確認できましたが、ブリッジ自身がタグを見て何かを判断しているのか、実際にフレームを覗いて確認します。
 
-キャプチャ対象は、ホスト上のvlan-vm1に対応するタップインターフェース`vnet1`です。ブリッジの中を流れるフレームをそのまま見ることができます。
+キャプチャ対象は、ホスト上のvlan-vm1に対応するtapインターフェース`vnet1`です。ブリッジとVMの境界を流れるフレームをそのまま見ることができます。
 
 ### 同一VLAN間のフレームを見る
 
@@ -230,7 +230,7 @@ listening on vnet1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 
 ### 異なるVLAN宛のフレームを見る
 
-次に、vlan-vm1からvlan-vm3宛にpingを打ちながら、vlan-vm3側のタップ（`vnet5`）をキャプチャしました。
+次に、vlan-vm1からvlan-vm3宛にpingを打ちながら、vlan-vm3側のtapインターフェース（`vnet5`）をキャプチャしました。
 
 ```bash
 $ sudo tcpdump -e -nn -i vnet5 vlan or arp
@@ -240,9 +240,9 @@ listening on vnet5, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 10:30:11.485206 52:54:00:e2:e3:f5 > ff:ff:ff:ff:ff:ff, ethertype 802.1Q (0x8100), length 46: vlan 10, p 0, ethertype ARP (0x0806), Request who-has 192.168.50.3 tell 192.168.50.1, length 28
 ```
 
-VID10のタグが付いたARP要求が、実際にvlan-vm3側のポートまで届いています。宛先がブロードキャストのため、ブリッジは中身のVLAN IDを気にせず、受信ポート以外の全ポートへそのままフラッディングしています。
+VLAN ID 10のタグが付いたARP要求が、実際にvlan-vm3側のポートまで届いています。宛先がブロードキャストのため、ブリッジは中身のVLAN IDを気にせず、受信ポート以外の全ポートへそのままフラッディングしています。
 
-それでもpingが失敗するのは、タグを処理しているのはvlan-vm3のゲストOS側にVLANタグ（VLAN ID10）に対応するサブインターフェースが存在しないためです。
+それでもpingが失敗するのは、vlan-vm3のゲストOS側にVLAN ID 10に対応するサブインターフェースが存在せず、届いたタグ付きフレームが破棄されるためです。
 
 ### タグの見え方をまとめる
 
@@ -289,4 +289,4 @@ sudo ip link delete br-vlandemo
 
 - [BondingとVLANでネットワークを設計する](https://zenn.dev/0x69d/articles/20260722-bonding-vlan-network-design)
 - [QEMU/KVM + libvirt 仮想化クイックガイド](https://zenn.dev/0x69d/articles/20260707-qemu-kvm-libvirt-quickstart)
-- [Linux BridgeのVLAN Filteringでアクセスポート/トランクポートを実現する](https://zenn.dev/0x69d/articles/20260722-linux-bridge-vlan-filtering)
+- [LinuxブリッジのVLAN Filteringでアクセスポートを作る](https://zenn.dev/0x69d/articles/20260722-linux-bridge-vlan-filtering)

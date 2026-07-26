@@ -1,5 +1,5 @@
 ---
-title: "Linux BridgeのVLAN Filteringでアクセスポート/トランクポートを実現する"
+title: "LinuxブリッジのVLAN Filteringでアクセスポートを作る"
 emoji: "🛂"
 type: "tech"
 topics: ["linux", "network", "vlan", "bridge", "libvirt"]
@@ -8,7 +8,7 @@ published: true
 
 ## はじめに
 
-前回記事「[VLANサブインターフェースでVLAN分離を検証する](https://zenn.dev/0x69d/articles/20260722-vlan-subinterface-verification)」では、VLANタグの付与・剥奪は各VMのゲストOS側に任せていました。ブリッジはタグを一切見ない、という構成です。
+前回記事「[VLANサブインターフェースでVLAN分離を検証する](https://zenn.dev/0x69d/articles/20260722-vlan-subinterface-verification)」では、VLANタグの処理は各VMのゲストOSに任せていました。ブリッジはタグを一切見ない、という構成です。
 
 ただ、実際データセンターなどではL2スイッチがポート単位でVLANを認識し、タグの処理を担うことが多いようです。そこで今回は「ブリッジがVLANを処理する」方式として、Linux Bridgeをアクセスポートのように扱う**VLAN Filtering**を試します。
 
@@ -26,7 +26,7 @@ published: true
 
 前回記事の環境（`br-vlandemo` ブリッジ + `vlan-vm1`〜`vlan-vm3`）をそのまま使います。前回記事の「後片付け」を実施済みの場合は、同記事の手順でVMとブリッジを再構築してください。
 
-今回はゲストOS側でVLANを扱わないため、各VMの`enp2s0`をフラットな状態に戻します。`vlan-vm1`・`vlan-vm2`では`vlan10`、`vlan-vm3`では`vlan20`というVLANサブインターフェース用のコネクションを削除し、親インターフェースに直接IPアドレスを設定します。
+今回はゲストOSでVLANタグを処理しないため、各VMの`enp2s0`をフラットな状態に戻します。`vlan-vm1`・`vlan-vm2`では`vlan10`、`vlan-vm3`では`vlan20`というVLANサブインターフェース用のコネクションを削除し、親インターフェースに直接IPアドレスを設定します。
 
 ```bash
 # VLANサブインターフェースのコネクションを削除
@@ -72,7 +72,7 @@ $ ip -d link show br-vlandemo
     bridge forward_delay 1500 hello_time 200 max_age 2000 ageing_time 30000 stp_state 0 priority 32768 vlan_filtering 1 vlan_protocol 802.1Q ...
 ```
 
-有効化した直後の`bridge vlan show`を見ると、各VMのポート（`vnet1`=vlan-vm1、`vnet3`=vlan-vm2、`vnet5`=vlan-vm3）はまだすべて`PVID 1`のままです（他の仮想ブリッジのエントリは本題と無関係なため省略）。
+有効化した直後の`bridge vlan show`を見ると、各VMのポート（`vnet1`=vlan-vm1、`vnet3`=vlan-vm2、`vnet5`=vlan-vm3、`virsh domiflist`で確認）はまだすべてVLAN IDが1のままです（他ブリッジのポートは省略）。
 
 ```bash
 $ bridge vlan show
@@ -98,20 +98,21 @@ vnet5             1 PVID Egress Untagged
 | vlan-vm3 | vnet5 | 20 |
 
 ```bash
-# vlan-vm1・vlan-vm2のポートをVID10のアクセスポートに
+# vlan-vm1・vlan-vm2のポートをVLAN ID 10のアクセスポートに
+# dev: 対象ポート / vid: 割り当てるVLAN ID
+# pvid: タグなしで受信したフレームに割り当てるデフォルトVLANに設定 / untagged: 送信時はタグを外す
+# vid 1を残すとVLAN 1でもタグなし送信され分離が漏れるため削除する
 $ sudo bridge vlan add dev vnet1 vid 10 pvid untagged
 $ sudo bridge vlan del dev vnet1 vid 1
 $ sudo bridge vlan add dev vnet3 vid 10 pvid untagged
 $ sudo bridge vlan del dev vnet3 vid 1
 
-# vlan-vm3のポートをVID20のアクセスポートに
+# vlan-vm3のポートをVLAN ID 20のアクセスポートに
 $ sudo bridge vlan add dev vnet5 vid 20 pvid untagged
 $ sudo bridge vlan del dev vnet5 vid 1
 ```
 
-ブリッジの各ポートにpvidを設定しました。
-
-`vid 1`を明示的に削除している点が重要です。各ポートにpvidを追加しただけだと、1ポートに2つのVLANが存在する不正な状態になってしまいます。この削除まで含めて1セットです。
+ブリッジの各ポートにvid, pvidを設定しました。
 
 設定後の状態です。
 
@@ -124,11 +125,13 @@ vnet3             10 PVID Egress Untagged
 vnet5             20 PVID Egress Untagged
 ```
 
+なお、この設定は非永続です。VMを再起動すると`vnetX`が作り直され消えます。
+
 ## 疎通確認とブロードキャスト封じ込めの確認
 
 ### 同一VLAN間・異なるVLAN間の疎通確認
 
-`vlan-vm1`(VID10)から`vlan-vm2`(VID10)へpingを打ちます。
+`vlan-vm1`(VLAN ID 10)から`vlan-vm2`(VLAN ID 10)へpingを打ちます。
 
 ```bash
 $ ping -c 4 192.168.50.2
@@ -142,7 +145,7 @@ PING 192.168.50.2 (192.168.50.2) 56(84) bytes of data.
 4 packets transmitted, 4 received, 0% packet loss, time 3007ms
 ```
 
-続いて`vlan-vm1`(VID10)から`vlan-vm3`(VID20)へ。
+続いて`vlan-vm1`(VLAN ID 10)から`vlan-vm3`(VLAN ID 20)へ。
 
 ```bash
 $ ping -c 4 -W 2 192.168.50.3
@@ -169,7 +172,7 @@ $ sudo tcpdump -e -nn -i vnet1 icmp
 15:19:03.109847 52:54:00:46:6e:d2 > 52:54:00:e2:e3:f5, ethertype IPv4 (0x0800), length 98: 192.168.50.2 > 192.168.50.1: ICMP echo reply, id 9889, seq 2, length 64
 ```
 
-`ethertype IPv4 (0x0800)`とだけ表示され、802.1Qタグは付いていません。前回記事では同じ場所を覗いたとき`ethertype 802.1Q (0x8100), ... vlan 10`とタグ付きで観測されていました。ゲストOSが送信したフレームに、ブリッジがポートのPVID(10)でタグを付けて内部でVLAN10として転送している、ということがわかります。
+`ethertype IPv4 (0x0800)`とだけ表示され、802.1Qタグは付いていません。前回記事では同じ場所を覗いたとき`ethertype 802.1Q (0x8100), ... vlan 10`とタグ付きで観測されていました。ゲストOSが送信したフレームに、ブリッジがポートのPVID(10)でタグを付けて内部でVLAN ID 10として転送している、ということがわかります。
 
 フレームの視点で整理すると、次のようになります。
 
@@ -184,7 +187,7 @@ graph LR
 
 ### ブロードキャストの封じ込め
 
-前回記事では、異なるVLAN宛のARPブロードキャストが、VID20側のポート(`vnet5`)まで届いていました。VLANタグは付いたまま届き、ゲストOS側にVID20のサブインターフェースがないため単に無視されていた、という状態です。
+前回記事では、異なるVLAN宛のARPブロードキャストが、VLAN ID 20側のポート(`vnet5`)まで届いていました。VLANタグは付いたまま届き、ゲストOS側にVLAN ID 20のサブインターフェースがないため単に無視されていた、という状態です。
 
 今回はブリッジ自身がVLANを認識しているため、そもそも異なるVLAN宛のARPブロードキャストは届かないはずです。
 
@@ -192,12 +195,12 @@ graph LR
 graph LR
     subgraph After["今回 (vlan_filtering 1)"]
         direction LR
-        A1["ARP要求<br/>(VID10)"] -->|VID10所属の<br/>ポートのみへ| A2["vnet1, vnet3"]
-        A1 -.->|届かない| A3["vnet5<br/>(VID20)"]
+        A1["ARP要求<br/>(VLAN ID 10)"] -->|VLAN ID 10所属の<br/>ポートのみへ| A2["vnet1, vnet3"]
+        A1 -.->|届かない| A3["vnet5<br/>(VLAN ID 20)"]
     end
 ```
 
-まず`vlan-vm1`のARPキャッシュを消してから`vlan-vm1`(VID10)→`vlan-vm2`(VID10)へpingを打ち、`vnet5`側をキャプチャします。
+まず`vlan-vm1`のARPキャッシュを消してから`vlan-vm1`(VLAN ID 10)→`vlan-vm2`(VLAN ID 10)へpingを打ち、`vnet5`側をキャプチャします。
 
 ```bash
 # vlan-vm1側で事前にARPキャッシュをクリア
@@ -214,12 +217,12 @@ $ sudo tcpdump -e -nn -i vnet5
 
 ## おまけ: トランクポート
 
-トランクポートは、複数のVLANに所属するポートです。アクセスポートではブリッジ内でVLANタグを付与していましたが、トランクポートではすでにVLAN タグが付与されているフレームを扱います。
+トランクポートは、複数のVLANに所属するポートです。アクセスポートではブリッジ内でVLANタグを付与していましたが、トランクポートではすでにVLANタグが付与されているフレームを扱います。
 
 設定方法はシンプルで、`pvid untagged`を付けずに複数のVLANを`bridge vlan add`するだけです。
 
 ```bash
-# ポートをVID10/20両方を許可するトランクポートにする例
+# ポートをVLAN ID 10/20両方を許可するトランクポートにする例
 $ sudo bridge vlan add dev vnetX vid 10
 $ sudo bridge vlan add dev vnetX vid 20
 ```
@@ -228,7 +231,7 @@ $ sudo bridge vlan add dev vnetX vid 20
 
 ## まとめ
 
-- ブリッジ自身がVLANタグの付与・剥奪の責任を持つ**VLAN Filtering**方式を扱いました
+- ブリッジ自身がVLANタグの付与・剥奪の責任を持つ**VLAN Filtering**方式を扱いました。
 - **アクセスポート**はゲストOS側にVLANを一切意識させず、ブリッジのPVIDだけで分離を実現できます。
 - VLAN Filteringが有効な状態では、異なるVLANのポートにそもそもブロードキャストが届きません。
 
