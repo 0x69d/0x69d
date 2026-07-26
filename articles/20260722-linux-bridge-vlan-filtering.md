@@ -1,6 +1,6 @@
 ---
 title: "LinuxブリッジのVLAN Filteringでアクセスポートを作る"
-emoji: "🛂"
+emoji: "🌉"
 type: "tech"
 topics: ["linux", "network", "vlan", "bridge", "libvirt"]
 published: true
