@@ -15,8 +15,19 @@ ITエンジニアです。前職は介護士でした。
 
 ## Certifications
 - 基本情報技術者
-- LinuC Level 1
+- LinuC Level 2
 - AWS Certified Solutions Architect - Associate
+- さくらのクラウド検定 ベーシック
+
+## Projects
+QEMU/KVM + libvirtを使い、VPSのような仮想サーバー基盤を個人で作っています。宣言的な定義からVMを払い出すコントロールプレーンと、その上で動くネットワーク・DNSのアプライアンスVMで構成しています。
+
+- **[mini-vps-platform](https://github.com/0x69d/mini-vps-platform)**
+  - YAML / JSONの宣言からlibvirt domainを払い出す、単一ホスト向けのVMコントロールプレーン。CLIとWeb APIの2つの入口、nwfilterによるパケットフィルタ、静的IP割当、Prometheus / Grafanaによる監視まで実装しています。（Python / FastAPI / Typer）
+- **[minivps-router-appliance](https://github.com/0x69d/minivps-router-appliance)**
+  - 相互に分離された3つのネットワークセグメント間をルーティングするルータVM。IP forwarding + nftablesによるファイアウォールをゲスト内に構成し、ゴールデンイメージとして再現可能な形でビルドします。
+- **[minivps-dns-appliance](https://github.com/0x69d/minivps-dns-appliance)**
+  - 内部ドメイン`minivps.internal`の権威DNSと、内部向け再帰リゾルバを提供するDNS VM。BIND9のTSIGで保護した動的更新により、mini-vps-platformがVM作成時にA・PTRレコードを自動登録します。
 
 ## OSS Contribution
 - **[Stellio Context Broker](https://github.com/stellio-hub/stellio-context-broker)**
