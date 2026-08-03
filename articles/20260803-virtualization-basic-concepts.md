@@ -135,4 +135,4 @@ libvirtが`virsh`のような使いやすいインターフェースをユーザ
 
 ## 参考
 
-- [Configuring and managing Linux virtual machines - Red Hat Enterprise Linux 10 | Red Hat Documentation](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html-single/configuring_and_managing_linux_virtual_machines/index) の Chapter 1. Basic concepts of virtualization in RHEL を参考にしています
+- [RHEL における仮想化の基本概念 - Red Hat Enterprise Linux 10 | Red Hat Documentation](https://docs.redhat.com/ja/documentation/red_hat_enterprise_linux/10/html/configuring_and_managing_linux_virtual_machines/basic-concepts-of-virtualization-in-rhel) を参考にしています
